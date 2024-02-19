@@ -1,0 +1,4 @@
+gymnasium [atari]
+gymnasium [accept-rom-license]
+numpy
+pillow
