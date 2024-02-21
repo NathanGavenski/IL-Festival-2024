@@ -22,20 +22,35 @@ class Client:
 
         self.connect()
 
-        self.update_queue = queue.Queue()
+        self.threads = []
         thread = threading.Thread(target=self.display_frame)
         thread.start()
+        self.threads.append(thread)
 
         self.root.mainloop()
-        self.update_queue.get()
-
-        self.close()
+        self.root.update()
 
     def connect(self) -> None:
         self.s.connect((self.HOST, self.PORT))
 
-    def close(self) -> None:
-        self.s.close()
+    def close(self, server=False) -> None:
+        if not server:
+            print("Closing connection")
+            data = json.dumps({"action": "close"})
+            self.s.send(data.encode())
+            self.s.close()
+
+        print("stopping threads")
+        for thread in self.threads:
+            try:
+                thread.join(0)
+            except RuntimeError:
+                pass
+
+        print("stopping interface")
+        self.root.destroy()
+        self.root.quit()
+        exit()
 
     def display_frame(self) -> None:
         while True:
@@ -43,7 +58,10 @@ class Client:
             try:
                 self.app.update_image(frame)
             except RuntimeError:
-                self.update_queue.put(None)
+                self.close()
+                break
+            except AttributeError:
+                self.close()
                 break
 
     def request_frame(self) -> list[float]:
@@ -55,7 +73,12 @@ class Client:
         length = np.inf
         h, w, c = 0, 0, 0
         while index < length:
-            response = self.s.recv(self.BUFFER_SIZE)
+            try:
+                response = self.s.recv(self.BUFFER_SIZE)
+            except ConnectionResetError:
+                self.close(True)
+                return
+
             response = json.loads(response.decode())
             frame += response.get("frame", [])
             index = response.get("index", 0)

@@ -1,11 +1,18 @@
 import json
+import random
 import socket
 import threading
+import time
 import tkinter as tk
 
-import gymnasium as gym
+import gym
+import gym_super_mario_bros
+from nes_py.wrappers import JoypadSpace
+from gymnasium.wrappers import StepAPICompatibility, TimeLimit
+from pynput import keyboard
 
 from render import ImageWindow
+from utils import ACTIONS, ACTIONS_MAPPING
 
 
 class Server:
@@ -14,24 +21,38 @@ class Server:
     PORT = 16006
     BUFFER_SIZE = 1024
 
-    def __init__(self, env_name: str = "ALE/DonkeyKong-v5"):
+    def __init__(self, env_name: str = "SuperMarioBros-v0"):
         self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.environment = self.create_environment(env_name)
-        self.state, _ = self.environment.reset()
+        self.frame = self.environment.reset()
         self.done = False
+        self.human = True
+        self.pressed_keys = []
+        self.closing = False
 
         self.root = tk.Tk()
         self.app = ImageWindow(self.root, "Player")
 
         self.open_socket()
 
+        self.threads = []
         thread = threading.Thread(target=self.connect)
         thread.start()
+        self.threads.append(thread)
 
         thread = threading.Thread(target=self.render_frame)
         thread.start()
+        self.threads.append(thread)
+
+        thread = threading.Thread(target=self.step)
+        thread.start()
+        self.threads.append(thread)
+
+        self.listen_keyboard()
 
         self.root.mainloop()
+        self.root.update()
+        exit()
 
     ##################### SOCKET RELATED #####################
     def open_socket(self) -> None:
@@ -41,31 +62,44 @@ class Server:
 
     def connect(self) -> None:
         self.conn, self.addr = self.s.accept()
-        print(f"Connected by {self.addr}")
-        while True:
-            data = self.conn.recv(self.BUFFER_SIZE)
-            if not data:
-                break
 
+        self.human = True
+        if random.random() > 1:
+            self.human = False
+
+        print(f"Connected by {self.addr}")
+        while not self.closing:
+            data = self.conn.recv(self.BUFFER_SIZE)
             data = json.loads(data.decode())
             match data.get("action", ""):
                 case "frame":
-                    self.send_frame()
+                    if self.human:
+                        self.send_frame()
+                    else:
+                        # send agent replay
+                        pass
                 case "close":
+                    print(f"Closing connection with {self.addr}")
                     self.conn.send(b"ok")
+                    self.conn.close()
                     break
                 case _:
-                    self.conn.send(b"")
+                    self.conn.send(b"{}")
         self.connect()
 
     def close(self) -> None:
-        print("Connection closed")
+        self.closing = True
         self.s.close()
+        self.listener.stop()
+        for thread in self.threads:
+            thread.join(0)
+        self.root.destroy()
+        self.root.quit()
+        exit()
 
     def send_frame(self) -> None:
-        render = self.environment.render()
-        h, w, c = render.shape
-        render = render.reshape((-1))
+        h, w, c = self.frame.shape
+        render = self.frame.reshape((-1))
         indexes = list(range(0, render.shape[0], 1024))
         indexes += [render.shape[0]]
         for i, index in enumerate(indexes[:-1]):
@@ -83,14 +117,103 @@ class Server:
             self.conn.send(data.encode())
             self.conn.recv(self.BUFFER_SIZE)
 
+    ##################### INPUT RELATED #####################
+    def listen_keyboard(self):
+        self.listener = keyboard.Listener(
+            on_press=self.on_press,
+            on_release=self.on_release
+        )
+        self.listener.start()
+
+    def get_key(self, key):
+        try:
+            return key.char
+        except AttributeError:
+            pass
+        return key
+
+    def on_press(self, key) -> None:
+        match self.get_key(key):
+            case keyboard.Key.up:
+                self.add_pressed_keys("up")
+            case keyboard.Key.down:
+                self.add_pressed_keys("down")
+            case keyboard.Key.right:
+                self.add_pressed_keys("right")
+            case keyboard.Key.left:
+                self.add_pressed_keys("left")
+            case "z":
+                self.add_pressed_keys("A")
+            case "x":
+                self.add_pressed_keys("B")
+            case "r":
+                self.frame = self.environment.reset()
+            case _:
+                self.add_pressed_keys("NOOP")
+
+    def on_release(self, key) -> None:
+        match self.get_key(key):
+            case keyboard.Key.up:
+                self.remove_pressed_keys("up")
+            case keyboard.Key.down:
+                self.remove_pressed_keys("down")
+            case keyboard.Key.right:
+                self.remove_pressed_keys("right")
+            case keyboard.Key.left:
+                self.remove_pressed_keys("left")
+            case "z":
+                self.remove_pressed_keys("A")
+            case "x":
+                self.remove_pressed_keys("B")
+            case keyboard.Key.esc:
+                self.close()
+                return False
+            case _:
+                self.remove_pressed_keys("NOOP")
+
+    def add_pressed_keys(self, key) -> None:
+        self.pressed_keys.append(key)
+        self.pressed_keys = list(set(self.pressed_keys))
+        self.pressed_keys.sort()
+
+    def remove_pressed_keys(self, key) -> None:
+        try:
+            self.pressed_keys.remove(key)
+        except ValueError:
+            pass
+
+    def get_action_from_pressed_keys(self) -> int:
+        return ACTIONS_MAPPING.get(tuple(self.pressed_keys), 0)
+
     ##################### GYM RELATED #####################
     def render_frame(self) -> None:
-        while True:
-            frame = self.environment.render()
-            self.app.update_image(frame)
+        while not self.closing:
+            self.app.update_image(self.frame)
 
     def create_environment(self, env_name: str) -> gym.Env:
-        return gym.make(env_name, render_mode="rgb_array")
+        env = gym.make(env_name)
+        steps = env._max_episode_steps
+
+        env = JoypadSpace(env.env, ACTIONS)
+        def gymnasium_reset(self, **kwargs):
+            return self.env.reset()
+        env.reset = gymnasium_reset.__get__(env, JoypadSpace)
+
+        env = StepAPICompatibility(env, output_truncation_bool=True)
+        env = TimeLimit(env, max_episode_steps=steps)
+        return env
+
+    def step(self) -> None:
+        while not self.closing:
+            try:
+                action = self.get_action_from_pressed_keys()
+                self.frame, *_ = self.environment.step(action)
+            except ValueError:
+                self.frame = self.environment.reset()
+            time.sleep(1/40)
+
+    def reset(self) -> None:
+        self.frame = self.environment.reset()
 
 
 if __name__ == "__main__":
