@@ -1,4 +1,6 @@
 import json
+import os
+import pickle
 import random
 import socket
 import threading
@@ -10,6 +12,7 @@ import gym_super_mario_bros
 from nes_py.wrappers import JoypadSpace
 from gymnasium.wrappers import StepAPICompatibility, TimeLimit
 from pynput import keyboard
+from PIL import Image
 
 from render import ImageWindow
 from utils import ACTIONS, ACTIONS_MAPPING
@@ -21,14 +24,23 @@ class Server:
     PORT = 16006
     BUFFER_SIZE = 1024
 
-    def __init__(self, env_name: str = "SuperMarioBros-v0"):
+    def __init__(self, env_name: str = "SuperMarioBros-1-1-v0", record: bool = False):
         self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.environment = self.create_environment(env_name)
-        self.frame = self.environment.reset()
         self.done = False
         self.human = True
         self.pressed_keys = []
         self.closing = False
+
+        self.record = record
+        self.episode = 0
+        self.timestep = 0
+        self.actions = []
+        self.root_dir = "./tmp/recordings/"
+        if self.record:
+            self.start_recording()
+
+        self.environment = self.create_environment(env_name)
+        self.reset()
 
         self.root = tk.Tk()
         self.app = ImageWindow(self.root, "Player")
@@ -186,6 +198,13 @@ class Server:
         return ACTIONS_MAPPING.get(tuple(self.pressed_keys), 0)
 
     ##################### GYM RELATED #####################
+    def start_recording(self) -> None:
+        if not os.path.exists(self.root_dir):
+            os.makedirs(self.root_dir)
+            self.episode = 0
+        else:
+            self.episode = len(next(os.walk(self.root_dir))[1])
+
     def render_frame(self) -> None:
         while not self.closing:
             self.app.update_image(self.frame)
@@ -208,13 +227,32 @@ class Server:
             try:
                 action = self.get_action_from_pressed_keys()
                 self.frame, *_ = self.environment.step(action)
+                if self.record:
+                    self.save_image()
+                    self.actions.append(action)
+                    self.timestep += 1
             except ValueError:
-                self.frame = self.environment.reset()
+                self.save_actions()
+                self.episode += 1
+                self.timestep = 0
+                self.reset()
             time.sleep(1/40)
 
     def reset(self) -> None:
         self.frame = self.environment.reset()
 
+        if self.record:
+            if not os.path.exists(f"{self.root_dir}{self.episode}/"):
+                os.makedirs(f"{self.root_dir}{self.episode}")
+            self.save_image()
+
+    def save_image(self) -> None:
+        Image.fromarray(self.frame).save(f"{self.root_dir}{self.episode}/{self.timestep}.png")
+
+    def save_actions(self) -> None:
+        with open(f"{self.root_dir}{self.episode}/action.pkl", "wb") as f:
+            pickle.dump(self.actions, f)
+
 
 if __name__ == "__main__":
-    server = Server()
+    server = Server(record=True)
