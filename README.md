@@ -24,8 +24,8 @@ python client.py
 - [x] Create a Client Server relation
 - [x] Make Client and Server render the same game
 - [ ] Buy a controller for the player
-- [ ] Listen to inputs to make the player act in the environment
-- [ ] Create a chance to the client not see the server but an agent replay
+- [x] Listen to inputs to make the player act in the environment
+- [x] Create a chance to the client not see the server but an agent replay
 - [ ] Find agents that look like humans
 - [ ] Record these agents
 - [ ] Create a survey for the viewer to respond after guessing
