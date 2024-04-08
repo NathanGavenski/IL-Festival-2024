@@ -38,6 +38,14 @@ ACTIONS = [
 
 
 def ignore_unhashable(func: Callable[Any, tuple]) -> tuple[int]:
+    """ Ignore unhashable types in the cache
+
+    Args:
+        func (Callable[Any, tuple]): wrapped function to ignore unhashable types
+
+    Returns:
+        tuple[int]: tuple of hashable types
+    """
     uncached = func.__wrapped__
     attributes = functools.WRAPPER_ASSIGNMENTS + ('cache_info', 'cache_clear')
 

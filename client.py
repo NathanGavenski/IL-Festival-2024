@@ -1,5 +1,5 @@
+"""Module for the client to request and display rendered images."""
 import json
-import queue
 import socket
 import threading
 import tkinter as tk
@@ -10,12 +10,25 @@ from render import ImageWindow
 
 
 class Client:
+    """A client to request and display rendered images.
+
+    Parameters:
+        HOST: The IP address of the server.
+        PORT: The port of the server.
+        BUFFER_SIZE: The size of the buffer for receiving data.
+        
+        s: The socket to communicate with the server.
+        root: The main window of the client.
+        app: The window to display the rendered images.
+        threads: The threads to run the client.
+    """
 
     HOST = "127.0.0.1"
     PORT = 16006
     BUFFER_SIZE = 8192
 
     def __init__(self):
+        """Initializes the client."""
         self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.root = tk.Tk()
         self.app = ImageWindow(self.root, "Viewer")
@@ -31,9 +44,15 @@ class Client:
         self.root.update()
 
     def connect(self) -> None:
+        """Connects to the server."""
         self.s.connect((self.HOST, self.PORT))
 
-    def close(self, server=False) -> None:
+    def close(self, server: bool = False) -> None:
+        """Closes the connection and stops the client.
+
+        Args:
+            server (bool, optional): Whether the server closed the connection. Defaults to False.
+        """
         if not server:
             print("Closing connection")
             data = json.dumps({"action": "close"})
@@ -53,6 +72,7 @@ class Client:
         exit()
 
     def display_frame(self) -> None:
+        """Displays the rendered images."""
         while True:
             frame = self.request_frame()
             try:
@@ -65,6 +85,11 @@ class Client:
                 break
 
     def request_frame(self) -> list[float]:
+        """Requests a frame from the server.
+
+        Returns:
+            list[float]: The rendered image.
+        """
         data = json.dumps({"action": "frame"})
         self.s.send(data.encode())
 

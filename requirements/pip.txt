@@ -1,4 +1,7 @@
 gymnasium [atari]
 gymnasium [accept-rom-license]
+gym-super-mario-bros
 numpy
 pillow
+pynput
+nes-py
