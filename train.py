@@ -136,6 +136,7 @@ class MarioDataset(Dataset):
         actions = pickle.load(open(f"{path}action.pkl", "rb"))
         actions = torch.tensor(actions)
         images = [join(path, f) for f in listdir(path) if "png" in f]
+        images.sort(key=lambda x: int(x.split("/")[-1].split(".")[0]))
         return images, actions
 
     def __len__(self) -> int:
