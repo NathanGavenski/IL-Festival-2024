@@ -1,4 +1,5 @@
 """Server module for the AI Festival experience."""
+from queue import Queue
 from typing import Union
 import json
 import os
@@ -11,26 +12,24 @@ import threading
 import time
 import tkinter as tk
 
-import gym
-import gym_super_mario_bros
-from nes_py.wrappers import JoypadSpace
-from gymnasium.wrappers import StepAPICompatibility, TimeLimit
 from pynput import keyboard
 from pynput.keyboard import Key
 from PIL import Image
+import numpy as np
 
 from render import ImageWindow
-from utils import ACTIONS, ACTIONS_MAPPING
+from utils import ACTIONS_MAPPING, Connection
+from utils import create_environment
 
 
 class Server:
     """Server class for the AI Festival experience.
-    
+
     Parameters:
         HOST: The IP address of the server.
         PORT: The port of the server.
         BUFFER_SIZE: The size of the buffer for receiving data.
-        
+
         s (socket.socket): socket connection
         done (bool): whether the game is done
         human (bool): whether the player is human
@@ -47,7 +46,7 @@ class Server:
         app (ImageWindow): image window
         threads (list): list of threads (connect, render_frame, step)
         listener (keyboard.Listener): keyboard listener
-        frame (np.ndarray): frame of the environment   
+        frame (np.ndarray): frame of the environment
     """
 
     HOST = "127.0.0.1"
@@ -66,6 +65,9 @@ class Server:
         self.human = True
         self.pressed_keys = []
         self.closing = False
+        self.connection_type = Connection.FRAME
+        if self.connection_type == Connection.ACTION:
+            self.action_queue = Queue()
 
         self.record = record
         self.episode = 0
@@ -73,10 +75,11 @@ class Server:
         self.actions = []
         self.status = {}
         self.root_dir = "./tmp/recordings/"
+        self.timeout = 1/40
         if self.record:
             self.start_recording()
 
-        self.environment = self.create_environment(env_name)
+        self.environment = create_environment(env_name)
         self.reset()
 
         self.root = tk.Tk()
@@ -103,6 +106,22 @@ class Server:
         self.root.update()
         exit()
 
+    def load_replay(self) -> list[list[float]]:
+        path = "./tmp/agent_play/"
+        folders = [
+            os.path.join(path, f)
+            for f in listdir(path)
+            if ".ipynb_checkpoints" not in f
+        ]
+        folder = random.choice(folders)
+        images = [
+            os.path.join(folder, f)
+            for f in listdir(folder)
+            if "png" in f
+        ]
+        images.sort(key=lambda x: int(x.split("/")[-1].split(".")[0]))
+        return images, folder.split("/")[-1]
+
     ##################### SOCKET RELATED #####################
     def open_socket(self) -> None:
         """Open socket connection."""
@@ -117,18 +136,48 @@ class Server:
         self.human = True
         if random.random() > 1:
             self.human = False
+            self.agent_replay_count = 0
+            self.agent_replay, self.folder = self.load_replay()
 
         print(f"Connected by {self.addr}")
+        self.reset()
         while not self.closing:
             data = self.conn.recv(self.BUFFER_SIZE)
             data = json.loads(data.decode())
             match data.get("action", ""):
                 case "frame":
                     if self.human:
-                        self.send_frame()
+                        if self.connection_type == Connection.FRAME:
+                            if self.done:
+                                data = {"status": "finish", "human": True}
+                                self.conn.send(json.dumps(data).encode())
+                            else:
+                                self.send_frame()
+                        else:
+                            if self.done and self.action_queue.empty():
+                                data = {"status": "finish", "human": True}
+                                self.conn.send(json.dumps(data).encode())
+                            else:
+                                action = self.action_queue.get()
+                                data = {"human": True, "action": action}
+                                self.conn.send(json.dumps(data).encode())
                     else:
-                        # send agent replay
-                        pass
+                        if self.agent_replay_count == len(self.agent_replay) - 1:
+                            data = {"status": "finish", "human": self.human}
+                            self.conn.send(json.dumps(data).encode())
+                        else:
+                            if self.connection_type == Connection.FRAME:
+                                self.send_replay()
+                            else:
+                                time.sleep(self.timeout)
+                                data = {
+                                    "human": False,
+                                    "recording": self.folder,
+                                    "index": self.agent_replay_count
+                                }
+                                self.conn.send(json.dumps(data).encode())
+                                self.agent_replay_count += 1
+
                 case "close":
                     print(f"Closing connection with {self.addr}")
                     self.conn.send(b"ok")
@@ -169,6 +218,32 @@ class Server:
             data = json.dumps(data)
             self.conn.send(data.encode())
             self.conn.recv(self.BUFFER_SIZE)
+
+    def send_replay(self) -> None:
+        """Send replay to the client."""
+        frame = self.agent_replay[self.agent_replay_count]
+        frame = Image.open(frame)
+        frame = np.array(frame)
+        h, w, c = frame.shape
+        render = frame.reshape((-1))
+        indexes = list(range(0, render.shape[0], 1024))
+        indexes += [render.shape[0]]
+        for i, index in enumerate(indexes[:-1]):
+            data = {
+                "info": {
+                    "height": h,
+                    "width": w,
+                    "channels": c
+                },
+                "frame": render[index:indexes[i+1]].tolist(),
+                "index": i,
+                "length": len(indexes) - 2,
+            }
+            data = json.dumps(data)
+            self.conn.send(data.encode())
+            self.conn.recv(self.BUFFER_SIZE)
+        if self.agent_replay_count + 1 < len(self.agent_replay):
+            self.agent_replay_count += 1
 
     ##################### INPUT RELATED #####################
     def listen_keyboard(self) -> None:
@@ -300,57 +375,43 @@ class Server:
         while not self.closing:
             self.app.update_image(self.frame)
 
-    def create_environment(self, env_name: str) -> gym.Env:
-        """Create the gym environment.
-
-        Args:
-            env_name (str): gym environment name
-
-        Returns:
-            gym.Env: gym environment
-        """
-        env = gym.make(env_name)
-        steps = env._max_episode_steps
-
-        env = JoypadSpace(env.env, ACTIONS)
-
-        def gymnasium_reset(self, **kwargs):
-            return self.env.reset()
-        env.reset = gymnasium_reset.__get__(env, JoypadSpace)
-
-        env = StepAPICompatibility(env, output_truncation_bool=True)
-        env = TimeLimit(env, max_episode_steps=steps)
-        return env
-
     def step(self) -> None:
         """Step through the environment."""
         while not self.closing:
             try:
                 action = self.get_action_from_pressed_keys()
+
                 self.frame, reward, done, truncated, info = self.environment.step(action)
                 done |= truncated
-
-                if done and info["flag_get"]:
-                    self.status[self.episode] = True
-                    self.save_status()
-                elif done:
-                    self.status[self.episode] = False
-                    self.save_status()
+                self.done = done
+                if self.connection_type == Connection.ACTION:
+                    self.action_queue.put(action)
 
                 if self.record:
+                    if done and info["flag_get"]:
+                        self.status[self.episode] = True
+                        self.save_status()
+                    elif done:
+                        self.status[self.episode] = False
+                        self.save_status()
+
                     self.save_image()
                     self.actions.append(action)
                     self.timestep += 1
             except ValueError:
-                self.save_actions()
+                if self.record:
+                    self.save_actions()
                 self.episode += 1
                 self.timestep = 0
-                self.reset()
-            time.sleep(1/40)
+            time.sleep(self.timeout)
 
     def reset(self) -> None:
         """Reset the environment."""
         self.frame = self.environment.reset()
+        self.done = False
+
+        if self.connection_type == Connection.ACTION:
+            self.action_queue = Queue()
 
         if self.record:
             if not os.path.exists(f"{self.root_dir}{self.episode}/"):
@@ -386,7 +447,10 @@ class Server:
 
             with open(f"{self.root_dir}{folder}/action.pkl", "rb") as f:
                 actions = pickle.load(f)
-                images = [f for f in listdir(f"{self.root_dir}{folder}") if "pkl" not in f]
+                images = [
+                    f for f in listdir(f"{self.root_dir}{folder}")
+                    if "pkl" not in f
+                ]
                 if len(actions) != len(images):
                     print(f"Deleting: {self.root_dir}{folder} - length mismatch")
                     shutil.rmtree(f"{self.root_dir}{folder}")
@@ -402,4 +466,4 @@ class Server:
 
 
 if __name__ == "__main__":
-    server = Server(record=True)
+    server = Server(record=False)

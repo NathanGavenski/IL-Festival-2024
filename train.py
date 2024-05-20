@@ -44,24 +44,6 @@ def create_env() -> gym.Env:
     return env
 
 
-def enjoy(self, transforms: Callable[[Tensor], Tensor] = None) -> dict[str, float]:
-    env = create_env()
-    average_reward = []
-    for _ in tqdm(range(100)):
-        done = False
-        obs = env.reset()
-        accumulated_reward = 0
-        while not done:
-            if transforms is not None:
-                obs = transforms(obs)
-                obs = obs[None]
-            action = self.predict(obs)
-            obs, reward, done, truncated, _ = env.step(action.item())
-            done |= truncated
-            accumulated_reward += reward
-        average_reward.append(accumulated_reward)
-    return {"aer": sum(average_reward) / 100}
-
 def train(
     self,
     n_epochs: int,
@@ -103,7 +85,7 @@ def train(
         else:
             board.step("train")
 
-        if train_metrics["accuracy"] > best_model:
+        if train_metrics["accuracy"] >= best_model:
             best_model = train_metrics["accuracy"]
             self.save(name=epoch if always_save else None)
 
@@ -154,24 +136,23 @@ class MarioDataset(Dataset):
 if __name__ == "__main__":
     dataset = MarioDataset([
         "./tmp/recordings/1/",
-        "./tmp/recordings/4/"
+        "./tmp/recordings/4/",
+        "./tmp/recordings/5/",
+        "./tmp/recordings/6/",
+        "./tmp/recordings/8/",
+        "./tmp/recordings/12/",
+        "./tmp/recordings/13/",
+        "./tmp/recordings/14/",
+        "./tmp/recordings/15/",
+        "./tmp/recordings/16/",
     ])
     dataloader = DataLoader(dataset, shuffle=True, batch_size=4)
 
     env = create_env()
     bc = BC(env, config_file="./bc.yaml", verbose=True, enjoy_criteria=999999)
-    enjoy = partial(
-        enjoy,
-        transforms=transforms.Compose([
-            Image.fromarray,
-            transforms.ToTensor(),
-        ])
-    )
-    bc._enjoy = types.MethodType(enjoy, bc)
     bc.train = types.MethodType(train, bc)
 
     bc.train(
-        n_epochs=1000,
+        n_epochs=200,
         train_dataset=dataloader
     )
-    print(bc._enjoy())

@@ -1,5 +1,16 @@
 from typing import Any, Callable
 import functools
+from enum import Enum
+
+import gym
+import gym_super_mario_bros
+from nes_py.wrappers import JoypadSpace
+from gymnasium.wrappers import StepAPICompatibility, TimeLimit
+
+
+class Connection(Enum):
+    FRAME = 1
+    ACTION = 2
 
 
 ACTIONS_MAPPING = {
@@ -59,3 +70,26 @@ def ignore_unhashable(func: Callable[Any, tuple]) -> tuple[int]:
             raise
     wrapper.__uncached__ = uncached
     return wrapper
+
+
+def create_environment(env_name: str) -> gym.Env:
+    """Create the gym environment.
+
+    Args:
+        env_name (str): gym environment name
+
+    Returns:
+        gym.Env: gym environment
+    """
+    env = gym.make(env_name)
+    steps = env._max_episode_steps
+
+    env = JoypadSpace(env.env, ACTIONS)
+
+    def gymnasium_reset(self, **kwargs):
+        return self.env.reset()
+    env.reset = gymnasium_reset.__get__(env, JoypadSpace)
+
+    env = StepAPICompatibility(env, output_truncation_bool=True)
+    env = TimeLimit(env, max_episode_steps=steps)
+    return env
