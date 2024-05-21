@@ -299,39 +299,47 @@ class Server:
                     else:
                         # up and down
                         match int(event.value):
-                            case 1:
+                            case -1:
                                 self.on_joy_press("up")
                                 self.last_vertical = "up"
                             case 0:
                                 self.on_joy_release(self.last_vertical)
                                 self.last_vertical = None
-                            case -1:
-                                self.on_joy_press("left")
-                                self.last_vertical = "left"
+                            case 1:
+                                self.on_joy_press("down")
+                                self.last_vertical = "down"
 
     def on_joy_press(self, key: str) -> None:
         match key:
-            case 0:
-                self.add_pressed_keys("A")
             case 1:
+                self.add_pressed_keys("A")
+            case 0:
                 self.add_pressed_keys("B")
             case "right":
                 self.add_pressed_keys("right")
             case "left":
                 self.add_pressed_keys("left")
+            case "up":
+                self.add_pressed_keys("up")
+            case "down":
+                self.add_pressed_keys("down")
             case _:
                 self.add_pressed_keys("NOOP")
 
     def on_joy_release(self, key: str) -> None:
         match key:
-            case 0:
-                self.remove_pressed_keys("A")
             case 1:
+                self.remove_pressed_keys("A")
+            case 0:
                 self.remove_pressed_keys("B")
             case "right":
                 self.remove_pressed_keys("right")
             case "left":
                 self.remove_pressed_keys("left")
+            case "up":
+                self.remove_pressed_keys("up")
+            case "down":
+                self.remove_pressed_keys("down")
             case _:
                 self.remove_pressed_keys("NOOP")
 
