@@ -16,6 +16,7 @@ from pynput import keyboard
 from pynput.keyboard import Key
 from PIL import Image
 import numpy as np
+import pygame
 
 from render import ImageWindow
 from utils import ACTIONS_MAPPING, Connection
@@ -49,7 +50,7 @@ class Server:
         frame (np.ndarray): frame of the environment
     """
 
-    HOST = "127.0.0.1"
+    HOST = "10.70.255.242"
     PORT = 16006
     BUFFER_SIZE = 1024
 
@@ -61,11 +62,12 @@ class Server:
             record (bool, optional): whether to record the experience. Defaults to False.
         """
         self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
         self.done = False
         self.human = True
         self.pressed_keys = []
         self.closing = False
-        self.connection_type = Connection.FRAME
+        self.connection_type = Connection.ACTION
         if self.connection_type == Connection.ACTION:
             self.action_queue = Queue()
 
@@ -97,6 +99,10 @@ class Server:
         self.threads.append(thread)
 
         thread = threading.Thread(target=self.step)
+        thread.start()
+        self.threads.append(thread)
+
+        thread = threading.Thread(target=self.listen_joypad)
         thread.start()
         self.threads.append(thread)
 
@@ -135,9 +141,12 @@ class Server:
 
         self.human = True
         if random.random() > 1:
+            print("agent")
             self.human = False
             self.agent_replay_count = 0
             self.agent_replay, self.folder = self.load_replay()
+        else:
+            print("human")
 
         print(f"Connected by {self.addr}")
         self.reset()
@@ -253,6 +262,78 @@ class Server:
             on_release=self.on_release
         )
         self.listener.start()
+
+    def listen_joypad(self) -> None:
+        """Listen to joypad inputs."""
+        print("Start listening to joypad")
+
+        pygame.init()
+        if pygame.joystick.get_count() == 0:
+            return
+
+        self.joystick = pygame.joystick.Joystick(0)
+        self.joystick.init()
+
+        self.last_horizontal = None
+        self.last_vertical = None
+
+        while not self.closing:
+            for event in pygame.event.get():
+                if event.type == pygame.JOYBUTTONDOWN:
+                    self.on_joy_press(event.button)
+                if event.type == pygame.JOYBUTTONUP:
+                    self.on_joy_release(event.button)
+                if event.type == pygame.JOYAXISMOTION:
+                    if event.axis == 0:
+                        # left and right
+                        match int(event.value):
+                            case 1:
+                                self.on_joy_press("right")
+                                self.last_horizontal = "right"
+                            case 0:
+                                self.on_joy_release(self.last_horizontal)
+                                self.last_horizontal = None
+                            case -1:
+                                self.on_joy_press("left")
+                                self.last_horizontal = "left"
+                    else:
+                        # up and down
+                        match int(event.value):
+                            case 1:
+                                self.on_joy_press("up")
+                                self.last_vertical = "up"
+                            case 0:
+                                self.on_joy_release(self.last_vertical)
+                                self.last_vertical = None
+                            case -1:
+                                self.on_joy_press("left")
+                                self.last_vertical = "left"
+
+    def on_joy_press(self, key: str) -> None:
+        match key:
+            case 0:
+                self.add_pressed_keys("A")
+            case 1:
+                self.add_pressed_keys("B")
+            case "right":
+                self.add_pressed_keys("right")
+            case "left":
+                self.add_pressed_keys("left")
+            case _:
+                self.add_pressed_keys("NOOP")
+
+    def on_joy_release(self, key: str) -> None:
+        match key:
+            case 0:
+                self.remove_pressed_keys("A")
+            case 1:
+                self.remove_pressed_keys("B")
+            case "right":
+                self.remove_pressed_keys("right")
+            case "left":
+                self.remove_pressed_keys("left")
+            case _:
+                self.remove_pressed_keys("NOOP")
 
     def get_key(self, key: Key) -> str:
         """Get key from the event.

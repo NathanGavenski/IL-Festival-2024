@@ -1,2 +1,6 @@
-
 tmp/*
+.ipynb_checkpoints/
+__pycache__/
+benchmark_results/
+*.ipynb
+*.zip
