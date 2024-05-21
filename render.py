@@ -20,7 +20,8 @@ class ImageWindow:
         self,
         master: tk.Tk,
         title: str = "Rendered Image",
-        size: float = 3.5
+        size: float = 3.5,
+        on_close: callable = None
     ):
         """Initializes the ImageWindow.
 
@@ -38,6 +39,8 @@ class ImageWindow:
         self.button_frame.pack(side=tk.TOP, fill=tk.X)
 
         self.ratio = size
+        if on_close is not None:
+            self.master.protocol("WM_DELETE_WINDOW", on_close)
 
     def add_buttons(self, human: bool, callback: callable) -> None:
         """Adds 'Human' and 'Agent' buttons on top of the image."""

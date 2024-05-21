@@ -26,7 +26,7 @@ class Client:
         threads: The threads to run the client.
     """
 
-    HOST = "127.0.0.1"
+    HOST = "10.70.255.242"
     PORT = 16006
     BUFFER_SIZE = 8192
 
@@ -34,9 +34,9 @@ class Client:
         """Initializes the client."""
         self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.root = tk.Tk()
-        self.app = ImageWindow(self.root, "Viewer")
+        self.app = ImageWindow(self.root, "Viewer", on_close=self.close)
         self.buttons = False
-        self.connection_type = Connection.FRAME
+        self.connection_type = Connection.ACTION
         self.recording_path = "./tmp/agent_play/"
 
         if self.connection_type == Connection.ACTION:
